@@ -16,10 +16,6 @@ function disconnect() {
     console.log("Disconnected");
 }
 
-// function sendName() {
-//     ws.send($("#name").val());
-// }
-
 function showGreeting(message) {
     showEvent(message);
     console.log("console log" + message);
@@ -90,7 +86,7 @@ function sendContent() {
     console.log("sending content...");
     ws.send(JSON.stringify(
         {
-            'name': $("#name").val()
+            'content': $("#content").val()
         })
     );
 
