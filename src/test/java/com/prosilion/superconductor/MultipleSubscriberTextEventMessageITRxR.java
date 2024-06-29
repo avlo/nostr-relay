@@ -1,11 +1,13 @@
 package com.prosilion.superconductor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.util.concurrent.MoreExecutors;
 import lombok.Getter;
 import lombok.Synchronized;
 import org.jetbrains.annotations.NotNull;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -26,23 +28,20 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@TestInstance(Lifecycle.PER_CLASS)
 @SpringBootTest(webEnvironment = WebEnvironment.DEFINED_PORT)
 @DirtiesContext
 @ContextConfiguration
 @TestPropertySource("/application-test.properties")
 class MultipleSubscriberTextEventMessageITRxR {
-  private static final String SCHEME_WS = "ws";
-  private static final String HOST = "localhost";
   private final String websocketUrl;
 
   private final String hexCounterSeed;
@@ -50,39 +49,35 @@ class MultipleSubscriberTextEventMessageITRxR {
   private final Integer targetCount;
   private final Integer pctThreshold;
   int resultCount;
-
-  private ObjectMapper mapper;
-  private ExecutorService executorService;
+  private final ObjectMapper mapper;
+  private final ExecutorService executorService;
+  String inJson;
+  String expectedJson;
 
   MultipleSubscriberTextEventMessageITRxR(
       @Value("${server.port}") String port,
       @Value("${superconductor.test.req.hexCounterSeed}") String hexCounterSeed,
       @Value("${superconductor.test.req.instances}") Integer reqInstances,
-      @Value("${superconductor.test.req.success_threshold_pct}") Integer pctThreshold) {
-    this.websocketUrl = SCHEME_WS + "://" + HOST + ":" + port;
+      @Value("${superconductor.test.req.success_threshold_pct}") Integer pctThreshold) throws IOException {
+    this.websocketUrl = "ws://localhost:5555";
     this.hexCounterSeed = hexCounterSeed;
     this.hexStartNumber = Integer.parseInt(hexCounterSeed, 16);
     this.targetCount = reqInstances;
     this.pctThreshold = pctThreshold;
 
-    this.executorService = MoreExecutors.newDirectExecutorService();
+    this.executorService = Executors.newFixedThreadPool(targetCount + 1);
     this.mapper = new ObjectMapper();
     this.resultCount = 0;
+    this.inJson = Files.lines(Paths.get("src/test/resources/text_event_json_input.txt")).collect(Collectors.joining("\n"));
+    this.expectedJson = Files.lines(Paths.get("src/test/resources/text_event_json_reordered.txt")).collect(Collectors.joining("\n"));
   }
 
-  @Test
-  void testTextEventMessage() throws IOException, InterruptedException {
-    testEventMessageThenReqMessage(
-        Files.lines(Paths.get("src/test/resources/text_event_json_input.txt")).collect(Collectors.joining("\n")),
-        Files.lines(Paths.get("src/test/resources/text_event_json_reordered.txt")).collect(Collectors.joining("\n"))
-    );
-  }
-
-  private void testEventMessageThenReqMessage(String inJson, String expectedJson) throws InterruptedException {
+  @BeforeAll
+  private void setup() {
     WebSocketStompClient eventStompClient = new WebSocketStompClient(new StandardWebSocketClient());
     eventStompClient.setMessageConverter(new MappingJackson2MessageConverter());
-    Callable<CompletableFuture<WebSocketSession>> eventExecute = () -> eventStompClient.getWebSocketClient().execute(new EventMessageSocketHandler(inJson), websocketUrl, "");
-    executorService.submit(eventExecute);
+    CompletableFuture<WebSocketSession> eventExecute = eventStompClient.getWebSocketClient().execute(new EventMessageSocketHandler(inJson), websocketUrl, "");
+    executorService.submit(eventExecute::isDone);
 
     List<Callable<CompletableFuture<WebSocketSession>>> reqClients = new ArrayList<>(targetCount);
     IntStream.range(0, targetCount).parallel().forEach(increment -> {
@@ -100,14 +95,14 @@ class MultipleSubscriberTextEventMessageITRxR {
       reqClients.add(callableTask);
     });
 
-    executorService.invokeAll(reqClients);
+    assertDoesNotThrow(() -> executorService.invokeAll(reqClients).stream().parallel().forEach(future ->
+        await().until(() -> future.get().isDone())));
+  }
 
-//    assertDoesNotThrow(() -> executorService.invokeAll(reqClients).stream().parallel().forEach(future ->
-//        await().until(() -> future.get().isDone())));
-
+  @Test
+  void test1() {
     executorService.shutdown();
-    await().until(() -> executorService.awaitTermination(5000, TimeUnit.SECONDS));
-    await().until(executorService::isTerminated);
+    await().atMost(5, TimeUnit.SECONDS).until(executorService::isTerminated);
 
     System.out.println("-------------------");
     System.out.printf("[%s/%s] == [%d%% of minimal %d%%] completed before test-container thread ended%n",
@@ -118,12 +113,13 @@ class MultipleSubscriberTextEventMessageITRxR {
     System.out.println("-------------------");
   }
 
-  class EventMessageSocketHandler extends TextWebSocketHandler {
+  static class EventMessageSocketHandler extends TextWebSocketHandler {
     private final String inJson;
 
     public EventMessageSocketHandler(String inJson) {
       this.inJson = inJson;
     }
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
       session.sendMessage(new TextMessage(inJson));
