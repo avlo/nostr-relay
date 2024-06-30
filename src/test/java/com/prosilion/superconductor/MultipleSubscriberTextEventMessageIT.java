@@ -44,7 +44,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestPropertySource("/application-test.properties")
 class MultipleSubscriberTextEventMessageIT {
   private static String websocketUrl;
-
   private static String hexCounterSeed;
   private static int hexStartNumber;
   private static Integer targetCount;
@@ -52,11 +51,9 @@ class MultipleSubscriberTextEventMessageIT {
   int resultCount;
   private final ObjectMapper mapper;
   private static ExecutorService executorService;
-  String inJson;
-  String expectedJson;
+  static List<Map<String, String>> jsons;
 
   MultipleSubscriberTextEventMessageIT(
-      @Value("${server.port}") String port,
       @Value("${superconductor.test.req.hexCounterSeed}") String hexCounterSeed,
       @Value("${superconductor.test.req.instances}") Integer reqInstances,
       @Value("${superconductor.test.req.success_threshold_pct}") Integer pctThreshold) throws IOException {
@@ -69,18 +66,22 @@ class MultipleSubscriberTextEventMessageIT {
     this.executorService = Executors.newFixedThreadPool(targetCount + 1);
     this.mapper = new ObjectMapper();
     this.resultCount = 0;
-    this.inJson = Files.lines(Paths.get("src/test/resources/text_event_json_input.txt")).collect(Collectors.joining("\n"));
-    this.expectedJson = Files.lines(Paths.get("src/test/resources/text_event_json_reordered.txt")).collect(Collectors.joining("\n"));
-    this.stuff = new ArrayList<>();
+    this.jsons = new ArrayList<>();
 
-    stuff.add(Map.of(this.inJson, this.expectedJson));
+    jsons.add(Map.of(
+        Files.lines(Paths.get("src/test/resources/text_event_json_input.txt")).collect(Collectors.joining("\n")),
+        Files.lines(Paths.get("src/test/resources/text_event_json_reordered.txt")).collect(Collectors.joining("\n"))
+    ));
+
+    //    jsons.add(Map.of(
+    //        Files.lines(Paths.get("src/test/resources/classified_listing_event_json_input.txt")).collect(Collectors.joining("\n")),
+    //        Files.lines(Paths.get("src/test/resources/classified_listing_event_json_reordered.txt")).collect(Collectors.joining("\n"))
+    //    ));
   }
-
-  static List<Map<String, String>> stuff;
 
   @BeforeAll
   public void setup() {
-    stuff.forEach(map -> map.forEach((key, value) -> {
+    jsons.forEach(map -> map.forEach((key, value) -> {
       WebSocketStompClient eventStompClient = new WebSocketStompClient(new StandardWebSocketClient());
       eventStompClient.setMessageConverter(new MappingJackson2MessageConverter());
       CompletableFuture<WebSocketSession> eventExecute = eventStompClient.getWebSocketClient().execute(new EventMessageSocketHandler(key), websocketUrl, "");

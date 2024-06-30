@@ -6,20 +6,17 @@ import com.prosilion.superconductor.service.request.SubscriberService;
 import com.prosilion.superconductor.util.FilterMatcher;
 import lombok.NonNull;
 import lombok.SneakyThrows;
-import nostr.event.impl.Filters;
 import nostr.event.impl.GenericEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-
 @Service
 public class SubscriberNotifierService<T extends GenericEvent> {
   private final SubscriberService subscriberService;
-  private final FilterMatcher<T> filterMatcher;
+  private final FilterMatcher filterMatcher;
 
   @Autowired
-  public SubscriberNotifierService(SubscriberService subscriberService, FilterMatcher<T> filterMatcher) {
+  public SubscriberNotifierService(SubscriberService subscriberService, FilterMatcher filterMatcher) {
     this.subscriberService = subscriberService;
     this.filterMatcher = filterMatcher;
   }
@@ -30,13 +27,13 @@ public class SubscriberNotifierService<T extends GenericEvent> {
   }
 
   public void subscriptionEventHandler(@NonNull Long subscriberId, @NonNull AddNostrEvent<T> addNostrEvent) {
-    broadcastMatch(addNostrEvent, subscriberId, subscriberService.getFiltersList(subscriberId));
+    broadcastMatch(addNostrEvent, subscriberId);
   }
 
-  private void broadcastMatch(AddNostrEvent<T> addNostrEvent, Long subscriberId, List<Filters> filtersList) {
-    filtersList.forEach(filters ->
-        filterMatcher.intersectFilterMatches(filters, addNostrEvent).forEach(event ->
-            broadcastToClients(new FireNostrEvent<>(subscriberId, event.event()))));
+  private void broadcastMatch(AddNostrEvent<T> addNostrEvent, Long subscriberId) {
+    subscriberService.getFiltersList(subscriberId).forEach(filters ->
+        filterMatcher.intersectFilterMatches(filters, (AddNostrEvent<GenericEvent>) addNostrEvent).forEach(event ->
+            broadcastToClients((FireNostrEvent<T>) new FireNostrEvent<>(subscriberId, event.event()))));
   }
 
   @SneakyThrows
